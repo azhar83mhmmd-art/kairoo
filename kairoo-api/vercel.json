@@ -4,11 +4,21 @@
   "installCommand": "npm install",
   "functions": {
     "api/index.js": {
-      "includeFiles": "dist/**",
+      "includeFiles": [
+        "dist/**",
+        "public/**",
+        "router/**",
+        "src/config.json",
+        "src/endpoints/**",
+        "src/maker/**"
+      ],
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
   ]
 }
