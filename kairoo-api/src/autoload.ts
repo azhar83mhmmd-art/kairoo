@@ -17,8 +17,18 @@ const methods = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head']; //
 const readJson = (filePath: string) => JSON.parse(fs.readFileSync(filePath, 'utf-8'));
 
 const getEndpoints = (cwd: string) => {
-    const folder = path.join(cwd, 'src', 'endpoints');
-    if (!fs.existsSync(folder)) return {};
+    // In Vercel the compiled app runs from dist/, so the source endpoint
+    // JSON files are copied to dist/src/endpoints during build. Check both
+    // source and compiled locations instead of assuming cwd is the project root.
+    const folders = [
+        path.join(cwd, 'src', 'endpoints'),
+        path.join(cwd, 'dist', 'src', 'endpoints'),
+        path.join(__dirname, 'endpoints'),
+        path.join(__dirname, '..', 'endpoints')
+    ];
+
+    const folder = folders.find((dir) => fs.existsSync(dir));
+    if (!folder) return {};
     
     const endpoints: Record<string, any[]> = {};
     
@@ -42,7 +52,28 @@ const getEndpoints = (cwd: string) => {
 
 export const buildConfig = (configPath: string, cwd: string) => {
     const data = readJson(configPath);
-    data.tags = { ...(data.tags || {}), ...getEndpoints(cwd) };
+
+    // Ambil endpoints relatif terhadap lokasi config yang benar.
+    // Di Vercel, hasil build berada di dist/src, sedangkan process.cwd()
+    // biasanya /var/task, sehingga mencari /var/task/src/endpoints akan gagal.
+    const configDir = path.dirname(configPath);
+    const candidates = [
+        path.dirname(configDir),
+        cwd,
+        process.cwd(),
+        path.join(process.cwd(), 'dist')
+    ];
+
+    let endpoints: Record<string, any[]> = {};
+    for (const base of candidates) {
+        const loaded = getEndpoints(base);
+        if (Object.keys(loaded).length > 0) {
+            endpoints = loaded;
+            break;
+        }
+    }
+
+    data.tags = { ...(data.tags || {}), ...endpoints };
     return data;
 };
 
