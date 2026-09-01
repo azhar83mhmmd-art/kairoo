@@ -1,0 +1,33 @@
+[
+  {
+    "name": "Short URL",
+    "endpoint": "/api/tools/shorturl",
+    "filename": "shorturl",
+    "method": "GET",
+    "params": [
+      {
+        "name": "url",
+        "required": true,
+        "description": "Original URL"
+      },
+      {
+        "name": "alias",
+        "required": false,
+        "description": "Custom Alias"
+      }
+    ]
+  },
+  {
+    "name": "NIK Checker",
+    "endpoint": "/api/tools/nikcheck",
+    "filename": "nikcheck",
+    "method": "GET",
+    "params": [
+      {
+        "name": "nik",
+        "required": true,
+        "description": "16-digit Indonesian NIK"
+      }
+    ]
+  }
+]
