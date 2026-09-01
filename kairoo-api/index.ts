@@ -59,37 +59,23 @@ const findConfig = () => {
     return null;
 };
 
-const FALLBACK_CONFIG = {
-    settings: {
-        creator: 'Kairoo',
-        apiName: 'Kairoo',
-        description: 'A free and reliable API service.',
-        apiVersion: 'v1.0',
-        visitors: '0',
-        favicon: '/src/danzz.jpg',
-        thumbnail: '/src/thumbnail.jpg',
-        channelUrl: '',
-        github: ''
-    },
-    tags: {}
-};
-
+/*
+ * buildConfig sekarang SELALU berhasil menghasilkan config lengkap
+ * (settings + tags) walaupun configPath null/tidak ketemu, karena
+ * settings & endpoints dasarnya berasal dari src/registry.ts yang
+ * di-import statis (ikut ter-bundle ke Vercel, tidak bergantung pada
+ * file config.json ditemukan di disk saat runtime). configPath di sini
+ * hanya dipakai sebagai override opsional (mis. edit config.json lokal
+ * tanpa rebuild).
+ */
 const configPath = findConfig();
 
 let config: any;
-if (configPath) {
-    try {
-        config = buildConfig(configPath, process.cwd());
-    } catch (error) {
-        console.error('[✗] Failed to parse config.json, using fallback config:', error);
-        config = FALLBACK_CONFIG;
-    }
-} else {
-    console.error(
-        '[✗] config.json not found in any known location — using fallback config. ' +
-        'Endpoint dari src/endpoints/*.json tidak akan ter-load sampai ini diperbaiki.'
-    );
-    config = FALLBACK_CONFIG;
+try {
+    config = buildConfig(configPath ?? '', process.cwd());
+} catch (error) {
+    console.error('[✗] Failed to build config, endpoints may be incomplete:', error);
+    config = { settings: { creator: 'Kairoo' }, tags: {} };
 }
 
 /*
