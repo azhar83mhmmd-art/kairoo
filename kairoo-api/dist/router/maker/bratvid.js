@@ -1,0 +1,13 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = default_1;
+const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
+const engine = require(path_1.default.join(__dirname, '..', '..', 'src', 'maker', 'bratvid-engine.js'));
+async function default_1(req, res) { const text = String(req.query.text ?? req.body?.text ?? '').trim(), theme = String(req.query.theme ?? req.body?.theme ?? 'white'), format = String(req.query.format ?? req.body?.format ?? 'mp4'); if (!text)
+    return res.status(400).json({ status: false, message: "Parameter 'text' diperlukan." }); if (!['white', 'black', 'green'].includes(theme))
+    return res.status(400).json({ status: false, message: 'theme harus white, black, atau green' }); if (!['mp4', 'gif'].includes(format))
+    return res.status(400).json({ status: false, message: 'format harus mp4 atau gif' }); const out = await engine.generateBratVideo({ text, theme, format, blur: Number(req.query.blur ?? 0), frameDuration: Number(req.query.frameDuration ?? 0.35), holdDuration: Number(req.query.holdDuration ?? 1.2), maxWordPerLayer: Number(req.query.maxWordPerLayer ?? 1), maxWordBeforeReset: Number(req.query.maxWordBeforeReset ?? 0), fastProgress: true }); res.set('Content-Type', format === 'gif' ? 'image/gif' : 'video/mp4'); return res.send(fs_1.default.readFileSync(out)); }
