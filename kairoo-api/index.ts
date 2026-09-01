@@ -114,7 +114,13 @@ const findDir = (name: string) => {
     return path.join(process.cwd(), name);
 };
 
-const publicDir = findDir('public');
+const publicCandidates = [
+    path.join(process.cwd(), 'public'),
+    path.join(__dirname, '..', 'public'),
+    path.join(__dirname, 'public'),
+    path.join(process.cwd(), 'dist', 'public')
+];
+const publicDir = publicCandidates.find((dir) => fs.existsSync(dir)) || path.join(process.cwd(), 'public');
 const srcDir = findDir('src');
 
 const formatBytes = (bytes: number) => {
@@ -229,9 +235,20 @@ app.get('/config', (req: Request, res: Response) => {
 });
 
 app.get('/', (req: Request, res: Response) => {
-    return res.sendFile(
-        path.join(publicDir, 'landing', 'landing.html')
-    );
+    const landingFile = path.join(publicDir, 'landing', 'landing.html');
+
+    // Vercel/serverless: jangan biarkan API crash hanya karena asset landing
+    // tidak ikut ter-bundle. Jika file ada, tetap tampilkan landing page;
+    // jika tidak ada, kembalikan status API dalam JSON.
+    if (fs.existsSync(landingFile)) {
+        return res.sendFile(landingFile);
+    }
+
+    return res.status(200).json({
+        status: true,
+        creator: config.settings.creator,
+        message: 'Kairoo API is running'
+    });
 });
 
 app.get('/docs', (req: Request, res: Response) => {
