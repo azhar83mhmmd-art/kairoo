@@ -2,11 +2,12 @@
  * Kairoo API | sylvatica.my.id
  * © Dandy
  */
- 
+
 import { Application, Request, Response, NextFunction } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { logRouterRequest } from './logger';
+import { routerRegistry, endpointsRegistry, baseConfig } from './registry';
 
 const registeredRoutes = new Set<string>();
 let app: Application;
@@ -16,82 +17,45 @@ const methods = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head']; //
 
 const readJson = (filePath: string) => JSON.parse(fs.readFileSync(filePath, 'utf-8'));
 
-const getEndpoints = (cwd: string) => {
-    // In Vercel the compiled app runs from dist/, so the source endpoint
-    // JSON files are copied to dist/src/endpoints during build. Check both
-    // source and compiled locations instead of assuming cwd is the project root.
-    const folders = [
-        path.join(cwd, 'src', 'endpoints'),
-        path.join(cwd, 'dist', 'src', 'endpoints'),
-        path.join(__dirname, 'endpoints'),
-        path.join(__dirname, '..', 'endpoints')
-    ];
-
-    const folder = folders.find((dir) => fs.existsSync(dir));
-    if (!folder) return {};
-    
-    const endpoints: Record<string, any[]> = {};
-    
-    for (const file of fs.readdirSync(folder)) {
-        if (!file.endsWith('.json')) continue;
-
-        const name = file.replace('.json', '');
-        const filePath = path.join(folder, file);
-
-        try {
-            const data = readJson(filePath);
-            endpoints[name] = Array.isArray(data) ? data : data.endpoints || [];
-            console.log(`[i] Loaded endpoints: ${name} (${endpoints[name].length} routes)`);
-        } catch (error) {
-            console.error(`[!] Failed to load ${file}:`, error);
-        }
-    }
-
-    return endpoints;
-};
-
+/*
+ * buildConfig sekarang mengambil settings & endpoints dari registry statis
+ * (src/registry.ts) yang di-import langsung, BUKAN dari fs.readFileSync /
+ * fs.readdirSync saat runtime. Ini memastikan config.json dan setiap
+ * src/endpoints/*.json selalu ikut ter-bundle & ter-deploy ke Vercel,
+ * karena `import` statis dilacak oleh bundler saat build — tidak seperti
+ * pembacaan file dinamis yang sebelumnya sering gagal di lingkungan
+ * serverless (lihat komentar panjang di src/registry.ts).
+ *
+ * `configPath`/`cwd` masih diterima supaya index.ts tidak perlu diubah
+ * signature-nya, dan supaya `settings` tetap bisa dioverride dari file
+ * config.json lokal (mis. saat development, tanpa perlu rebuild) kalau
+ * memang ditemukan di disk.
+ */
 export const buildConfig = (configPath: string, cwd: string) => {
-    const data = readJson(configPath);
+    let data: any = baseConfig;
 
-    // Ambil endpoints relatif terhadap lokasi config yang benar.
-    // Di Vercel, hasil build berada di dist/src, sedangkan process.cwd()
-    // biasanya /var/task, sehingga mencari /var/task/src/endpoints akan gagal.
-    const configDir = path.dirname(configPath);
-    const candidates = [
-        path.dirname(configDir),
-        cwd,
-        process.cwd(),
-        path.join(process.cwd(), 'dist')
-    ];
-
-    let endpoints: Record<string, any[]> = {};
-    for (const base of candidates) {
-        const loaded = getEndpoints(base);
-        if (Object.keys(loaded).length > 0) {
-            endpoints = loaded;
-            break;
+    if (configPath && fs.existsSync(configPath)) {
+        try {
+            data = { ...baseConfig, ...readJson(configPath) };
+        } catch {
+            data = baseConfig;
         }
     }
 
-    data.tags = { ...(data.tags || {}), ...endpoints };
+    data = { ...data };
+    data.tags = { ...endpointsRegistry, ...(data.tags || {}) };
+
+    console.log(
+        `[i] Loaded endpoints from static registry: ${Object.keys(endpointsRegistry)
+            .map((name) => `${name} (${endpointsRegistry[name].length} routes)`)
+            .join(', ')}`
+    );
+
     return data;
 };
 
-const getRouteFile = (category: string, filename: string) => {
-    const folders = [
-        path.join(__dirname, '..', 'router', category),
-        path.join(process.cwd(), 'router', category),
-        path.join(process.cwd(), 'dist', 'router', category)
-    ];
-
-    for (const folder of folders) {
-        for (const extension of ['.ts', '.js']) {
-            const filePath = path.join(folder, `${filename}${extension}`);
-            if (fs.existsSync(filePath)) return filePath;
-        }
-    }
-
-    return null;
+const getRouteHandler = (category: string, filename: string) => {
+    return routerRegistry[category]?.[filename] || null;
 };
 
 const getRouteKey = (route: any) =>
@@ -118,24 +82,14 @@ const registerRoute = (
         return;
     }
 
-    const filePath = getRouteFile(category, route.filename);
+    const handler = getRouteHandler(category, route.filename);
 
-    if (!filePath) {
-        console.error(`[!] File not found: router/${category}/${route.filename}`);
+    if (typeof handler !== 'function') {
+        console.error(`[!] Handler not found in registry: ${category}/${route.filename}`);
         return;
     }
 
     try {
-        delete require.cache[require.resolve(filePath)];
-
-        const routeModule = require(filePath);
-        const handler = routeModule.default || routeModule;
-
-        if (typeof handler !== 'function') {
-            console.error(`[!] Invalid handler: ${filePath}`);
-            return;
-        }
-
         const routeHandler = async (req: Request, res: Response, next: NextFunction) => {
             logRouterRequest(req, res);
 
@@ -159,7 +113,7 @@ const registerRoute = (
         (targetApp as any)[method](route.endpoint, routeHandler);
         registeredRoutes.add(routeKey);
 
-        console.log(`[+] Loaded: ${route.method} ${route.endpoint} -> ${path.basename(filePath)}`);
+        console.log(`[+] Loaded: ${route.method} ${route.endpoint} -> ${category}/${route.filename}`);
     } catch (error) {
         console.error(`[!] Failed to load ${route.endpoint}:`, error);
     }
@@ -202,38 +156,24 @@ export const initAutoLoad = (
     console.log('[✓] Auto Load Activated');
 
     /*
-     * Bug sebelumnya: fs.watch() dipanggil tanpa syarat di sini, yang
-     * berjalan SYNCHRONOUS di akhir index.ts. Di Vercel/AWS Lambda
-     * (serverless) tidak ada dukungan inotify, jadi fs.watch() throw
-     * "ENOSYS: function not implemented, watch" — dan karena ini
-     * dipanggil di top-level module load, itu meng-crash SELURUH
-     * aplikasi di setiap cold start, untuk semua endpoint.
-     *
-     * Hot-reload juga tidak berguna di serverless (tiap invocation bisa
-     * dapat container baru), jadi langsung di-skip kalau terdeteksi
-     * berjalan di Vercel. Selain itu tetap dibungkus try/catch sebagai
-     * pengaman tambahan untuk environment lain yang juga read-only.
+     * fs.watch untuk hot-reload HANYA berguna & aman di lingkungan lokal
+     * (Termux/VPS) yang mendukung inotify dan filesystem read-write.
+     * Di Vercel (serverless, read-only, tanpa inotify) ini langsung
+     * di-skip, dan sekarang juga tidak lagi relevan untuk memuat
+     * endpoint karena endpoint selalu berasal dari registry statis yang
+     * sudah ter-bundle sejak build time.
      */
     if (process.env.VERCEL) {
         return;
     }
 
-    if (fs.existsSync(configPath)) {
+    if (configPath && fs.existsSync(configPath)) {
         try {
             fs.watch(configPath, (event, filename) => {
                 if (event !== 'change' || !filename) return;
 
                 try {
-                    const newConfig = readJson(configPath);
-
-                    config = {
-                        ...newConfig,
-                        tags: {
-                            ...(newConfig.tags || {}),
-                            ...getEndpoints(process.cwd())
-                        }
-                    };
-
+                    config = buildConfig(configPath, process.cwd());
                     reloadRouter();
                     console.log('[✓] Config reloaded');
                 } catch (error) {
@@ -242,30 +182,6 @@ export const initAutoLoad = (
             });
         } catch (error) {
             console.warn('[!] fs.watch tidak didukung di environment ini, hot-reload config dimatikan:', error);
-        }
-    }
-
-    const endpointsFolder = path.join(process.cwd(), 'src', 'endpoints');
-
-    if (fs.existsSync(endpointsFolder)) {
-        try {
-            fs.watch(endpointsFolder, (event, filename) => {
-                if (event !== 'change' || !filename || !filename.endsWith('.json')) return;
-
-                try {
-                    config.tags = {
-                        ...(config.tags || {}),
-                        ...getEndpoints(process.cwd())
-                    };
-
-                    reloadRouter();
-                    console.log(`[✓] Endpoint reloaded: ${filename}`);
-                } catch (error) {
-                    console.error('[!] Failed to reload endpoint:', error);
-                }
-            });
-        } catch (error) {
-            console.warn('[!] fs.watch tidak didukung di environment ini, hot-reload endpoint dimatikan:', error);
         }
     }
 };
